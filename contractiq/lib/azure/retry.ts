@@ -1,5 +1,5 @@
-// Shared transient-failure retry for OpenAI calls (network errors, 5xx, rate limits).
-// Used by both extraction and chat — see lib/openai/extract.ts and lib/openai/chat.ts.
+// Shared transient-failure retry for Azure agent calls (network errors, 5xx, rate limits).
+// Used by both extraction and chat — see lib/azure/extract.ts and lib/azure/chat.ts.
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

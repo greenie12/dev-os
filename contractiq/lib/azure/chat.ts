@@ -1,8 +1,6 @@
-import OpenAI from 'openai'
-import { callWithRetry } from '@/lib/openai/retry'
+import { azure, extractResponseText } from '@/lib/azure'
+import { callWithRetry } from '@/lib/azure/retry'
 import type { ChatMessage } from '@/lib/types/app.types'
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 export type QueryClass = 'contract' | 'history' | 'both'
 
@@ -62,7 +60,7 @@ export function classifyQuery(message: string): QueryClass {
   return 'contract'
 }
 
-function systemPromptFor(classification: QueryClass, contractText: string): string {
+function promptFor(classification: QueryClass, contractText: string): string {
   if (classification === 'history') return CHAT_SYSTEM_PROMPT_HISTORY
   const template = classification === 'both' ? CHAT_SYSTEM_PROMPT_BOTH : CHAT_SYSTEM_PROMPT
   return template.replace('{contract_text}', contractText)
@@ -74,20 +72,24 @@ function turnLimitFor(classification: QueryClass): number {
   return CONTRACT_TURN_LIMIT
 }
 
-export function buildMessages(
+// The Azure agent rejects a separate instructions/system field, so everything
+// that used to be a system prompt plus a role-tagged message history now gets
+// bundled into the single input message the agent accepts.
+export function buildInput(
   classification: QueryClass,
   contractText: string,
   history: Pick<ChatMessage, 'role' | 'content'>[],
   userMessage: string
-): OpenAI.Chat.ChatCompletionMessageParam[] {
-  const systemContent = systemPromptFor(classification, contractText)
+): string {
+  const instructions = promptFor(classification, contractText)
   const historyMessages = history.slice(-turnLimitFor(classification))
+  const transcript = historyMessages
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n')
 
-  return [
-    { role: 'system', content: systemContent },
-    ...historyMessages.map((m) => ({ role: m.role, content: m.content }) as OpenAI.Chat.ChatCompletionMessageParam),
-    { role: 'user', content: userMessage },
-  ]
+  return [instructions, transcript ? `CONVERSATION HISTORY:\n${transcript}` : null, `CURRENT USER MESSAGE:\n${userMessage}`]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export function extractPageCitation(content: string): number | null {
@@ -111,18 +113,18 @@ export async function getChatResponse(
   history: Pick<ChatMessage, 'role' | 'content'>[],
   userMessage: string
 ): Promise<{ content: string; pageCitation: number | null; contextSource: QueryClass }> {
-  const messages = buildMessages(classification, contractText, history, userMessage)
+  const input = buildInput(classification, contractText, history, userMessage)
 
   const response = await callWithRetry(() =>
-    openai.chat.completions.create({
-      model: 'gpt-4o',
-      temperature: 0.4,
-      max_tokens: 1000,
-      messages,
+    // The OpenAI SDK's TS types require `model` on responses.create(), but Azure
+    // rejects it once an agent is specified. Cast to any to satisfy the compiler
+    // without sending a model field at runtime.
+    (azure.responses as any).create({
+      input: [{ role: 'user', content: input }],
     })
   )
 
-  const rawContent = response.choices[0]?.message?.content ?? 'I cannot find this in the document.'
+  const rawContent = extractResponseText(response) || 'I cannot find this in the document.'
   const content = stripConversationTag(rawContent)
 
   return { content, pageCitation: extractPageCitation(content), contextSource: classification }

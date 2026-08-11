@@ -1,7 +1,7 @@
 // Hard pattern-based filter applied before ANY user-supplied or document-derived
-// text reaches an OpenAI call. This is defense-in-depth on top of the system
-// prompts' own "answer only from X" instructions (lib/openai/extract.ts,
-// lib/openai/chat.ts) — a system prompt is a strong suggestion the model usually
+// text reaches the Azure agent. This is defense-in-depth on top of the system
+// prompts' own "answer only from X" instructions (lib/azure/extract.ts,
+// lib/azure/chat.ts) — a system prompt is a strong suggestion the model usually
 // follows, not a hard boundary; this filter is the hard boundary.
 //
 // Applied to:

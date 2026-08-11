@@ -9,7 +9,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_CONTRACT_TYPE: 'Please select a contract type (NDA or MSA).',
   INVALID_FILE_TYPE: 'Only PDF files are accepted.',
   PARSE_FAILURE: 'AI analysis failed. Please try again.',
-  OPENAI_ERROR: 'Analysis failed. Please try again in a few minutes.',
+  AZURE_ERROR: 'Analysis failed. Please try again in a few minutes.',
   RATE_LIMITED: 'Too many analyses. Please wait a moment.',
   TOO_MANY_CUSTOM_TERMS: 'Maximum 5 custom terms allowed.',
   CONTRACT_NOT_FOUND: 'This contract could not be found.',

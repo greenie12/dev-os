@@ -12,7 +12,7 @@ import { MAX_CONTRACT_TOKENS } from '@/lib/utils/tokens'
 export const MAX_MESSAGE_LENGTH = 1000
 
 // How many past messages are fetched from the DB per chat turn, before
-// lib/openai/chat.ts further slices to 10-20 turns depending on query classification.
+// lib/azure/chat.ts further slices to 10-20 turns depending on query classification.
 // Configurable via env so it can be tuned per environment without a code change.
 export const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY) || 100
 

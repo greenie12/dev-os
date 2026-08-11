@@ -1,10 +1,15 @@
 import { requireAuth } from '@/lib/security/authGuard'
 import { jsonError, jsonOk } from '@/lib/api/response'
 import { processRequestSchema } from '@/lib/security/inputValidator'
-import { extractKeyTerms, ExtractionParseError } from '@/lib/openai/extract'
+import { extractKeyTerms, ExtractionParseError } from '@/lib/azure/extract'
 import { verifyContractOwnership } from '@/lib/security/chatSecurity'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/security/rateLimiter'
 import { sanitizeForLLM } from '@/lib/security/promptInjectionGuard'
+
+// The Azure agent can take 20-30s to respond. The Edge runtime's shorter timeout
+// would cut the request off, so this route is forced onto the Node.js runtime.
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 export async function POST(request: Request) {
   const { supabase, user, response } = await requireAuth()
@@ -18,7 +23,7 @@ export async function POST(request: Request) {
   const { contract_id: contractId, custom_terms: customTerms = [] } = parsedBody.data
 
   // Custom terms are free text the user typed — they get embedded directly into
-  // the extraction prompt (lib/openai/extract.ts), so they need the same
+  // the extraction prompt (lib/azure/extract.ts), so they need the same
   // injection check as any other user-supplied text bound for an LLM call.
   for (const term of customTerms) {
     const check = sanitizeForLLM(term)
@@ -50,8 +55,9 @@ export async function POST(request: Request) {
     if (error instanceof ExtractionParseError) {
       return jsonError('PARSE_FAILURE', error.message, 422)
     }
-    console.error({ error, context: 'openai_extraction', contractId })
-    return jsonError('OPENAI_ERROR', 'Analysis failed. Please try again in a few minutes.', 500)
+    console.error({ error, context: 'azure_extraction', contractId })
+    const azureMessage = error instanceof Error ? error.message : 'Unknown Azure agent error'
+    return jsonError('AZURE_ERROR', azureMessage, 500)
   }
 
   const rows = extracted.map((term) => ({

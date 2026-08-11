@@ -1,9 +1,9 @@
 import type { ContractType } from '@/lib/types/app.types'
 
 // Shared by the upload flow's PreProcessingPreview (what we tell the user we'll
-// extract) and lib/openai/extract.ts (what we actually ask GPT-4o to extract) —
-// spec-upload-flow.md and spec-extraction.md both define these lists and they
-// must stay identical, so they live in one place.
+// extract) and lib/azure/extract.ts (what we actually ask the Azure agent to
+// extract) — spec-upload-flow.md and spec-extraction.md both define these lists
+// and they must stay identical, so they live in one place.
 export const NDA_TERMS = [
   'Parties',
   'Effective Date',

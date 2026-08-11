@@ -1,9 +1,7 @@
-import OpenAI from 'openai'
+import { azure, extractResponseText } from '@/lib/azure'
 import { NDA_TERMS, MSA_TERMS } from '@/lib/constants/terms'
-import { callWithRetry } from '@/lib/openai/retry'
+import { callWithRetry } from '@/lib/azure/retry'
 import type { ContractType } from '@/lib/types/app.types'
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 export type ExtractedTerm = {
   term_name: string
@@ -36,6 +34,7 @@ RULES:
 3. Quote verbatim where possible — do not paraphrase values.
 4. page_number must match the [PAGE N] marker immediately preceding the relevant text.
 5. confidence_score should reflect how clearly the term is stated (not how important it is).
+6. Respond with ONLY the JSON object described below. No explanation, no markdown code fences, no surrounding text.
 
 ---
 
@@ -145,10 +144,18 @@ ${contractText}
 Return a JSON object with key "terms" containing an array of extracted term objects following the schema above. Extract all terms listed, in order. Do not add or omit any term.`
 }
 
+// The agent endpoint has no forced JSON-mode equivalent to
+// response_format: json_object, so the model occasionally wraps its answer in a
+// ```json fence despite the "no markdown" instruction — strip that before parsing.
+function stripCodeFence(content: string): string {
+  const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  return (fenceMatch ? fenceMatch[1] : content).trim()
+}
+
 function tryParseTerms(content: string | null | undefined): { terms: unknown[] } | null {
   if (!content) return null
   try {
-    const parsed = JSON.parse(content)
+    const parsed = JSON.parse(stripCodeFence(content))
     return Array.isArray(parsed?.terms) ? parsed : null
   } catch {
     return null
@@ -164,48 +171,37 @@ export async function extractKeyTerms(
   const customLabels = customTerms.map((t) => `[Custom] ${t}`)
   const termList = [...standardTerms, ...customLabels].map((t) => `- ${t}`).join('\n')
 
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
-    { role: 'user', content: buildUserPrompt(contractType, termList, contractText) },
-  ]
+  // The agent rejects a separate instructions/system field, so the extraction
+  // rules and the actual request are bundled into one input message.
+  const input = `${EXTRACTION_SYSTEM_PROMPT}\n\n---\n\n${buildUserPrompt(contractType, termList, contractText)}`
 
   // Transient-failure retry (3 attempts, exponential backoff). If this throws,
-  // the caller (app/api/process/route.ts) reports 500 OPENAI_ERROR.
+  // the caller (app/api/process/route.ts) reports 500 AZURE_ERROR.
   const response = await callWithRetry(() =>
-    openai.chat.completions.create({
-      model: 'gpt-4o',
-      temperature: 0.1,
-      max_tokens: 2000,
-      response_format: { type: 'json_object' },
-      messages,
+    // The OpenAI SDK's TS types require `model` on responses.create(), but Azure
+    // rejects it once an agent is specified. Cast to any to satisfy the compiler
+    // without sending a model field at runtime.
+    (azure.responses as any).create({
+      input: [{ role: 'user', content: input }],
     })
   )
 
-  let parsed = tryParseTerms(response.choices[0]?.message?.content)
+  let parsed = tryParseTerms(extractResponseText(response))
 
   if (!parsed) {
     // Single re-prompt for malformed-but-successful responses — not wrapped in
     // callWithRetry, since retrying identical input against a non-deterministic
     // failure mode with backoff wouldn't help; a corrective instruction might.
-    const retryResponse = await openai.chat.completions
-      .create({
-        model: 'gpt-4o',
-        temperature: 0.1,
-        max_tokens: 2000,
-        response_format: { type: 'json_object' },
-        messages: [
-          ...messages,
-          { role: 'assistant', content: response.choices[0]?.message?.content ?? '' },
-          {
-            role: 'user',
-            content:
-              'Your previous response was not valid JSON. Return only the JSON object with key "terms" containing the array. No explanation.',
-          },
-        ],
-      })
+    // The agent only accepts a single user message per call (no assistant-role
+    // history), so the correction is a fresh message restating the request plus
+    // an explicit JSON-only instruction, rather than a follow-up turn.
+    const retryInput = `${input}\n\nYour previous response was not valid JSON. Return ONLY the JSON object with key "terms" containing the array. No explanation, no markdown code fences, no surrounding text.`
+
+    const retryResponse = await (azure.responses as any)
+      .create({ input: [{ role: 'user', content: retryInput }] })
       .catch(() => null)
 
-    parsed = retryResponse ? tryParseTerms(retryResponse.choices[0]?.message?.content) : null
+    parsed = retryResponse ? tryParseTerms(extractResponseText(retryResponse)) : null
 
     if (!parsed) {
       throw new ExtractionParseError()

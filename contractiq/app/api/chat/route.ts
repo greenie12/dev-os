@@ -1,11 +1,16 @@
 import { requireAuth } from '@/lib/security/authGuard'
 import { jsonError, jsonOk } from '@/lib/api/response'
 import { chatRequestSchema } from '@/lib/security/inputValidator'
-import { classifyQuery, getChatResponse } from '@/lib/openai/chat'
+import { classifyQuery, getChatResponse } from '@/lib/azure/chat'
 import { verifyContractOwnership } from '@/lib/security/chatSecurity'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/security/rateLimiter'
 import { sanitizeForLLM } from '@/lib/security/promptInjectionGuard'
 import { MAX_CHAT_HISTORY } from '@/lib/security/tokenLimiter'
+
+// The Azure agent can take 20-30s to respond. The Edge runtime's shorter timeout
+// would cut the request off, so this route is forced onto the Node.js runtime.
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 export async function POST(request: Request) {
   const { supabase, user, response } = await requireAuth()
@@ -68,8 +73,9 @@ export async function POST(request: Request) {
   try {
     assistant = await getChatResponse(classification, contract.contract_text, existingMessages ?? [], message)
   } catch (error) {
-    console.error({ error, context: 'openai_chat', contractId })
-    return jsonError('OPENAI_ERROR', 'Chat failed. Please try again in a few minutes.', 500)
+    console.error({ error, context: 'azure_chat', contractId })
+    const azureMessage = error instanceof Error ? error.message : 'Unknown Azure agent error'
+    return jsonError('AZURE_ERROR', azureMessage, 500)
   }
 
   const { data: assistantMsg, error: assistantInsertError } = await supabase
